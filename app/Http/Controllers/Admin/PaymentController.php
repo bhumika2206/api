@@ -10,68 +10,103 @@ use Illuminate\Http\JsonResponse;
 use App\Models\User;
 use App\Models\PaymentTransfer;
 use Carbon\Carbon;
+use DB;
 
 
 class PaymentController extends BaseController
 {
     public function index(Request $request): JsonResponse
     {
-        // $users = User::where('email', $request->email)->first();
-        $payments = Payment::with(['User'])->get();
-        $response = [];
-        foreach($payments as $payment){
-            $response[] = [
-                'user_email' => $payment->amount,
-                'available_balance' => $payment->User->email
-            ];
+        try {
+            $payments  = DB::table('payments')
+                    ->select('amount','user_id','users.email')
+                    ->join('users', 'users.id', '=', 'payments.user_id')
+                    ->get();
+            $response = [];
+            foreach($payments as $payment){
+                $response[] = [
+                    'user_email' => $payment->email,
+                    'available_balance' => $payment->amount
+                ];
+            }
+        
+        
+            return $this->sendResponse($response, 'Payment balance retrieved successfully.');
+        } catch (Exception $e) {
+            return $e->getMessage();
         }
-       
-    
-        return $this->sendResponse($response, 'Payment balance retrieved successfully.');
     }
 
     public function getBalance(Request $request): JsonResponse
     {
-        $$users = User::where('email', $request->email)->first();
-        $payments = Payment::where('user_id', $users->id)->sum('amount');
-        $paymentTransfer = PaymentTransfer::where('user_id', $users->id)->sum('transfer_amount');
-        $amount = $payments - $paymentTransfer;
-        $response = [
-            'user_email' => $users->email,
-            'availbale_balance' => $amount
-        ];
-    
-        return $this->sendResponse($response, 'Payment get balance successfully.');
+        try {
+       
+            $payments  = DB::table('payments')
+                    ->select('amount','user_id','users.email')
+                    ->join('users', 'users.id', '=', 'payments.user_id')
+                    ->where('users.email', $request->email)
+                    ->first();
+
+            if($payments){
+
+                $response = [
+                    'user_email' =>$payments->email,
+                    'availbale_balance' => $payments->amount 
+                ];
+        
+                return $this->sendResponse($response, 'Payment get balance successfully.');
+            }else{
+                return $this->sendError('', 'User not found.');
+
+            }
+        }catch (Exception $e) {
+            return $e->getMessage();
+        }
     }
 
     public function transfer(Request $request): JsonResponse
     {
-        $users = User::where('email', $request->email)->first();
+        // $users = User::where('email', $request->email)->first();
         $user = User::where('email', $request->transfer_user_id)->first();
-        $payments = Payment::where('user_id', $users->id)->sum('amount');
-        if($payments >= $request->transfer_amount){
-            $transfer = new PaymentTransfer();
-            $transfer->user_id = $users->id;
-            $transfer->transfer_user_id = $user->id;
-            $transfer->transfer_amount = $request->transfer_amount;
-            $transfer->status = 'success';
-            if($transfer->save()){
-                $payment = Payment::where('user_id', $users->id)->first();
-                $payment->amount = ($payments - $request->transfer_amount);
-                // dd($request->transfer_amount - $payments);
-                $payment->save();
-                return $this->sendResponse($transfer, 'Payment transfer successfully.');
-            }   else{
-                return $this->sendError('', 'Something went wrong !');
-            } 
-            
+        if($user){
+            $payments  = DB::table('payments')
+                    ->select('amount','user_id','users.email')
+                    ->join('users', 'users.id', '=', 'payments.user_id')
+                    ->where('users.email', $request->email)
+                    ->first();
+
+            if($payments->amount >= $request->transfer_amount){
+                $transfer = new PaymentTransfer();
+                $transfer->user_id = $payments->user_id;
+                $transfer->transfer_user_id = $user->id;
+                $transfer->transfer_amount = $request->transfer_amount;
+                $transfer->status = 'success';
+                if($transfer->save()){
+                    $payment = Payment::where('user_id', $payments->user_id)->first();
+                    $payment->amount = ($payments->amount - $request->transfer_amount);
+                    // $payment->save();
+                    if($payment->save()){
+                        $payment2 = Payment::where('user_id', $user->id)->first();
+                        $payment2->amount = ($payment2->amount + $request->transfer_amount);
+                        $payment2->save();
+                    }
+                    return $this->sendResponse($transfer, 'Payment transfer successfully.');
+                }   else{
+                    return $this->sendError('', 'Something went wrong !');
+                } 
+                
+            }else{
+                $transfer = new PaymentTransfer();
+                $transfer->user_id = $payments->user_id;
+                $transfer->transfer_user_id = $user->id;
+                $transfer->transfer_amount = $request->transfer_amount;
+                $transfer->status = 'false';
+                $transfer->save();
+                return $this->sendError('', 'Insuficient Balance');
+            }
         }else{
-            $transfer = new PaymentTransfer();
-            $transfer->user_id = $users->id;
-            $transfer->transfer_user_id = $user->id;
-            $transfer->transfer_amount = $request->transfer_amount;
-            $transfer->status = 'false';
-            return $this->sendError('', 'Insuficient Balance');
+            return $this->sendError('', 'User not found.');
+
         }
     
     }
